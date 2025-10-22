@@ -1,0 +1,6 @@
+1984,George Orwell,1949
+To Kill a Mockingbird,Harper Lee,1960
+The Catcher in the Rye,J.D. Salinger,1951
+Harry Potter,J.k. Rowling,1990
+The Hunger Games,Suzanne Collins,2008
+The Lord of the Rings,J.R.R Tolkien,1937
