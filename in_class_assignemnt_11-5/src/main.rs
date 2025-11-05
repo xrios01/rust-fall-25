@@ -1,70 +1,100 @@
 use serde::Deserialize;
-use std::{error::Error, fs, io::Read};
+use std::error::Error;
+use std::fs::{self, File};
+use std::io::copy;
+use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 struct DogImage {
-    message: String,
-    status: String, // we print this to avoid the unused-field warning
+    message: String, 
+    status: String,  
 }
 
+/// Custom error enum 
 #[derive(Debug)]
-enum FetchErr {
+enum FetchError {
     Http(u16),
     Json(String),
-    Net(String),
+    Network(String),
     Io(std::io::Error),
 }
 
-impl std::fmt::Display for FetchErr {
+impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FetchErr::Http(code) => write!(f, "HTTP error: {code}"),
-            FetchErr::Json(msg) => write!(f, "JSON parse error: {msg}"),
-            FetchErr::Net(msg)  => write!(f, "Network error: {msg}"),
-            FetchErr::Io(e)     => write!(f, "I/O error: {e}"),
+            FetchError::Http(code) => write!(f, "HTTP error: {}", code),
+            FetchError::Json(e) => write!(f, "JSON parse error: {}", e),
+            FetchError::Network(e) => write!(f, "Network error: {}", e),
+            FetchError::Io(e) => write!(f, "I/O error: {}", e),
         }
     }
 }
-impl Error for FetchErr {}
-impl From<std::io::Error> for FetchErr {
-    fn from(e: std::io::Error) -> Self { FetchErr::Io(e) }
+
+impl Error for FetchError {}
+impl From<std::io::Error> for FetchError {
+    fn from(e: std::io::Error) -> Self {
+        FetchError::Io(e)
+    }
 }
 
-fn fetch_random_dog_image() -> Result<DogImage, FetchErr> {
-    let r = ureq::get("https://dog.ceo/api/breeds/image/random")
+// Fetch random dog image info
+fn fetch_random_dog_image() -> Result<DogImage, FetchError> {
+    let url = "https://dog.ceo/api/breeds/image/random";
+    let resp = ureq::get(url)
         .call()
-        .map_err(|e| FetchErr::Net(e.to_string()))?;
-    if r.status() != 200 { return Err(FetchErr::Http(r.status())); }
-    r.into_json().map_err(|e| FetchErr::Json(e.to_string()))
+        .map_err(|e| FetchError::Network(e.to_string()))?;
+    if resp.status() != 200 {
+        return Err(FetchError::Http(resp.status()));
+    }
+    resp.into_json::<DogImage>()
+        .map_err(|e| FetchError::Json(e.to_string()))
 }
 
-fn download_image(url: &str, i: usize) -> Result<String, FetchErr> {
-    let r = ureq::get(url).call().map_err(|e| FetchErr::Net(e.to_string()))?;
-    if r.status() != 200 { return Err(FetchErr::Http(r.status())); }
+// Download image to "downloads" folder
+fn download_image_to_file(
+    img_url: &str,
+    save_dir: &Path,
+    filename_stem: &str,
+    index: usize,
+) -> Result<String, FetchError> {
+    let resp = ureq::get(img_url)
+        .call()
+        .map_err(|e| FetchError::Network(e.to_string()))?;
+    if resp.status() != 200 {
+        return Err(FetchError::Http(resp.status()));
+    }
 
-    let mut buf = Vec::new();
-    r.into_reader().read_to_end(&mut buf)?;
-    fs::create_dir_all("downloads")?;
+    fs::create_dir_all(save_dir)?;
+    let filepath = save_dir.join(format!("{}_{}.jpg", filename_stem, index));
 
-    let ext = url.rsplit('.').next().unwrap_or("jpg");
-    let path = format!("downloads/dog_{i}.{ext}");
-    fs::write(&path, buf)?;
-    Ok(path)
+    let mut reader = resp.into_reader();
+    let mut out = File::create(&filepath)?;
+    copy(&mut reader, &mut out)?;
+
+    Ok(filepath.display().to_string())
 }
+
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("Dog Image Downloader (compact)");
+    println!("Dog Image Downloader");
+    println!("====================\n");
+
     for i in 1..=5 {
+        println!("Fetching random dog image #{}", i);
         match fetch_random_dog_image() {
-            Ok(d) => {
-                println!("api status: {}", d.status); // uses `status`
-                match download_image(&d.message, i) {
-                    Ok(p) => println!("✅ {i}: saved -> {p}"),
-                    Err(e) => eprintln!("❌ {i}: download error: {}", e),
+            Ok(dog) => {
+                println!("✅ API OK: {}", dog.status);
+                let save_dir = Path::new("downloads");
+                match download_image_to_file(&dog.message, save_dir, "dog", i) {
+                    Ok(path) => println!("💾 Saved: {}", path),
+                    Err(e) => eprintln!("❌ Download error: {}", e),
                 }
             }
-            Err(e) => eprintln!("❌ {i}: api error: {}", e),
+            Err(e) => eprintln!("❌ API error: {}", e),
         }
+        println!();
     }
+
+    println!("Done. Check the ./downloads folder for images.");
     Ok(())
 }
